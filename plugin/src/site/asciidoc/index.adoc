@@ -1,0 +1,436 @@
+= IKE Maven Plugin Reference
+
+IDE-discoverable Maven goals for workspace management, gitflow branching,
+release automation, and build verification.
+Goals appear in IntelliJ's Maven tool window as clickable, runnable targets
+with parameter prompts.
+
+== Goal Summary
+
+[cols="2,3,1",options="header"]
+|===
+| Goal | Purpose | Section
+
+| `ike:dashboard`
+| Composite overview: verify + status + cascade from dirty components
+| <<workspace>>
+
+| `ike:status`
+| Git status across workspace repos
+| <<workspace>>
+
+| `ike:verify`
+| Validate `workspace.yaml` consistency
+| <<workspace>>
+
+| `ike:cascade`
+| Show downstream impact of a component
+| <<workspace>>
+
+| `ike:graph`
+| Print dependency graph as text or Graphviz DOT
+| <<workspace>>
+
+| `ike:init`
+| Clone/initialize repos from `workspace.yaml`
+| <<workspace>>
+
+| `ike:pull`
+| Git pull --rebase across repos
+| <<workspace>>
+
+| `ike:stignore`
+| Generate `.stignore` files for Syncthing
+| <<workspace>>
+
+| `ike:feature-start`
+| Create feature branch with branch-qualified SNAPSHOT version
+| <<gitflow>>
+
+| `ike:feature-finish`
+| Merge feature to main, strip qualifier, tag merge point
+| <<gitflow>>
+
+| `ike:ws-checkpoint`
+| Record multi-repo checkpoint (SHAs, versions, branches, dirty flags)
+| <<gitflow>>
+
+| `ike:ws-release`
+| Release all dirty checked-out components in topo order
+| <<gitflow>>
+
+| `ike:release`
+| Full single-repo release lifecycle
+| <<release>>
+
+| `ike:generate-bom`
+| Auto-generate BOM from `ike-parent` dependencyManagement
+| <<release>>
+
+| `ike:checkpoint`
+| Single-repo immutable checkpoint
+| <<release>>
+
+| `ike:deploy-site`
+| Deploy site to versioned URL
+| <<release>>
+
+| `ike:clean-site`
+| Remove deployed site from server
+| <<release>>
+
+| `ike:help`
+| List all goals with options
+| <<release>>
+
+| `ike:workspace`
+| _Deprecated_ -- redirects to specific goals
+| <<deprecated>>
+
+| `ike:merge-to-main`
+| _Deprecated_ -- redirects to `ike:feature-finish`
+| <<deprecated>>
+
+| `ike:release-from-feature`
+| _Deprecated_ -- redirects to `ike:feature-finish` + `ike:release`
+| <<deprecated>>
+
+|===
+
+[[workspace]]
+== Workspace Goals
+
+Goals that operate across all repositories defined in `workspace.yaml`.
+
+=== `ike:dashboard`
+
+Composite overview that runs verify, status, and cascade from any dirty components.
+Provides a single-command health check for the entire workspace.
+
+No required parameters.
+
+[source,shell]
+----
+mvn ike:dashboard
+----
+
+=== `ike:status`
+
+Reports Git status (branch, version, uncommitted changes) across workspace repos.
+Optionally filtered to a named group from `workspace.yaml`.
+
+[cols="2,3,1",options="header"]
+|===
+| Parameter | Description | Default
+| `-Dgroup=<name>` | Restrict to a named group | _all repos_
+|===
+
+[source,shell]
+----
+mvn ike:status
+mvn ike:status -Dgroup=core
+----
+
+=== `ike:verify`
+
+Validates `workspace.yaml` consistency: declared dependencies exist, no dependency
+cycles, groups resolve to known components, and component types are defined.
+
+No required parameters.
+
+[source,shell]
+----
+mvn ike:verify
+----
+
+=== `ike:cascade`
+
+Shows the downstream impact of a given component -- which other components
+would need rebuilding or re-releasing if it changes.
+
+[cols="2,3,1",options="header"]
+|===
+| Parameter | Description | Default
+| `-Dcomponent=<name>` | Component to analyze (**required**) | _none_
+|===
+
+[source,shell]
+----
+mvn ike:cascade -Dcomponent=ike-parent
+----
+
+=== `ike:graph`
+
+Prints the workspace dependency graph as plain text or Graphviz DOT format
+for visualization.
+
+[cols="2,3,1",options="header"]
+|===
+| Parameter | Description | Default
+| `-Dformat=<text\|dot>` | Output format | `text`
+|===
+
+[source,shell]
+----
+mvn ike:graph
+mvn ike:graph -Dformat=dot > workspace.dot
+----
+
+=== `ike:init`
+
+Clones and initializes repos from `workspace.yaml`.
+Syncthing-aware: if a directory already exists (e.g., synced from another machine),
+it performs `git init` + `reset` instead of a fresh clone.
+
+[cols="2,3,1",options="header"]
+|===
+| Parameter | Description | Default
+| `-Dgroup=<name>` | Restrict to a named group | _all repos_
+|===
+
+[source,shell]
+----
+mvn ike:init
+mvn ike:init -Dgroup=docs
+----
+
+=== `ike:pull`
+
+Runs `git pull --rebase` across workspace repos to bring them up to date
+with their remotes.
+
+[cols="2,3,1",options="header"]
+|===
+| Parameter | Description | Default
+| `-Dgroup=<name>` | Restrict to a named group | _all repos_
+|===
+
+[source,shell]
+----
+mvn ike:pull
+mvn ike:pull -Dgroup=core
+----
+
+=== `ike:stignore`
+
+Generates `.stignore` files for Syncthing at the workspace level and within
+each component directory, excluding build artifacts and IDE metadata from sync.
+
+No required parameters.
+
+[source,shell]
+----
+mvn ike:stignore
+----
+
+[[gitflow]]
+== Gitflow Goals
+
+Goals that implement the IKE branching model for feature development,
+checkpointing, and coordinated multi-repo releases.
+
+=== `ike:feature-start`
+
+Creates a `feature/<name>` branch and sets a branch-qualified SNAPSHOT version
+(e.g., `1.0.0-my-feature-SNAPSHOT`) across the workspace.
+
+[cols="2,3,1",options="header"]
+|===
+| Parameter | Description | Default
+| `-Dfeature=<name>` | Feature branch name (**required**) | _none_
+| `-Dgroup=<name>` | Restrict to a named group | _all repos_
+| `-DskipVersion=true` | Skip version qualifier injection | `false`
+| `-DdryRun=true` | Show what would happen without making changes | `false`
+|===
+
+[source,shell]
+----
+mvn ike:feature-start -Dfeature=new-parser
+mvn ike:feature-start -Dfeature=new-parser -Dgroup=core -DdryRun=true
+----
+
+=== `ike:feature-finish`
+
+Merges a feature branch to main with `--no-ff`, strips the branch version qualifier,
+and tags the merge point.
+
+[cols="2,3,1",options="header"]
+|===
+| Parameter | Description | Default
+| `-Dfeature=<name>` | Feature branch name (**required**) | _none_
+| `-DtargetBranch=<branch>` | Branch to merge into | `main`
+| `-Dpush=<true\|false>` | Push after merge | `true`
+| `-DdryRun=true` | Show what would happen without making changes | `false`
+|===
+
+[source,shell]
+----
+mvn ike:feature-finish -Dfeature=new-parser
+mvn ike:feature-finish -Dfeature=new-parser -DtargetBranch=develop -DdryRun=true
+----
+
+=== `ike:ws-checkpoint`
+
+Records a multi-repo checkpoint capturing each component's SHA, version, branch,
+and dirty flag. Useful for marking a known-good state before coordinated changes.
+
+[cols="2,3,1",options="header"]
+|===
+| Parameter | Description | Default
+| `-Dname=<name>` | Checkpoint name (**required**) | _none_
+| `-Dtag=<true\|false>` | Create a Git tag at the checkpoint | `false`
+| `-Dpush=<true\|false>` | Push tags to remote | `false`
+|===
+
+[source,shell]
+----
+mvn ike:ws-checkpoint -Dname=pre-release-2026.03
+mvn ike:ws-checkpoint -Dname=pre-release-2026.03 -Dtag=true -Dpush=true
+----
+
+=== `ike:ws-release`
+
+Releases all dirty checked-out components in topological order.
+Self-limiting cascade: only components that need releasing are included.
+
+[cols="2,3,1",options="header"]
+|===
+| Parameter | Description | Default
+| `-Dcomponent=<name>` | Release a single component (and dependents) | _all dirty_
+| `-Dgroup=<name>` | Restrict to a named group | _all repos_
+| `-DdryRun=true` | Show what would happen without making changes | `false`
+| `-Dpush=<true\|false>` | Push after release | `false`
+| `-DskipCheckpoint=true` | Skip pre-release checkpoint | `false`
+|===
+
+[source,shell]
+----
+mvn ike:ws-release
+mvn ike:ws-release -Dcomponent=ike-parent -DdryRun=true
+mvn ike:ws-release -Dgroup=core -Dpush=true
+----
+
+[[release]]
+== Release Goals
+
+Goals for single-repository release lifecycle, BOM generation, site deployment,
+and checkpoint management.
+
+=== `ike:release`
+
+Full single-repo release: creates a release branch, sets the release version,
+builds, verifies, deploys site, deploys to Nexus, merges back, and bumps to
+the next SNAPSHOT.
+
+[cols="2,3,1",options="header"]
+|===
+| Parameter | Description | Default
+| `-DreleaseVersion=<ver>` | Release version to set | _auto-derived_
+| `-DnextVersion=<ver>` | Next SNAPSHOT version after release | _auto-derived_
+| `-DdryRun=true` | Show what would happen without making changes | `false`
+| `-DskipVerify=true` | Skip build verification | `false`
+| `-DallowBranch=<name>` | Allow release from a non-default branch | _main only_
+|===
+
+[source,shell]
+----
+mvn ike:release
+mvn ike:release -DreleaseVersion=2.0.0 -DnextVersion=2.1.0-SNAPSHOT
+mvn ike:release -DdryRun=true
+----
+
+=== `ike:generate-bom`
+
+Auto-generates a standalone BOM POM from `ike-parent`'s `dependencyManagement` section.
+Typically bound to `generate-resources` in the `ike-bom` module.
+
+[cols="2,3,1",options="header"]
+|===
+| Parameter | Description | Default
+| `-Dbom.source=<artifactId>` | Source artifact for dependencyManagement | `ike-parent`
+|===
+
+[source,shell]
+----
+mvn ike:generate-bom
+mvn ike:generate-bom -Dbom.source=ike-parent
+----
+
+=== `ike:checkpoint`
+
+Creates an immutable checkpoint for a single repository, capturing the current
+state for reproducibility.
+
+No required parameters.
+
+[source,shell]
+----
+mvn ike:checkpoint
+----
+
+=== `ike:deploy-site`
+
+Deploys the project site to a versioned URL on the site server.
+
+[cols="2,3,1",options="header"]
+|===
+| Parameter | Description | Default
+| `-DsiteType=<type>` | One of `release`, `snapshot`, `checkpoint` | _auto-detected_
+| `-Dbranch=<name>` | Branch name for URL path | _current branch_
+| `-DsiteVersion=<ver>` | Version for URL path | _project version_
+|===
+
+[source,shell]
+----
+mvn ike:deploy-site
+mvn ike:deploy-site -DsiteType=release -DsiteVersion=2.0.0
+----
+
+=== `ike:clean-site`
+
+Removes a previously deployed site from the server.
+
+[cols="2,3,1",options="header"]
+|===
+| Parameter | Description | Default
+| `-DsiteType=<type>` | One of `release`, `snapshot`, `checkpoint` | _required_
+| `-Dbranch=<name>` | Branch name for URL path | _current branch_
+| `-DsiteVersion=<ver>` | Version for URL path | _project version_
+| `-DdryRun=true` | Show what would be removed without deleting | `false`
+|===
+
+[source,shell]
+----
+mvn ike:clean-site -DsiteType=snapshot -DsiteVersion=1.5.0-SNAPSHOT
+mvn ike:clean-site -DsiteType=release -DdryRun=true
+----
+
+=== `ike:help`
+
+Lists all available goals with their parameters and descriptions.
+
+[source,shell]
+----
+mvn ike:help
+mvn ike:help -Ddetail=true -Dgoal=release
+----
+
+[[deprecated]]
+== Deprecated Goals
+
+These goals remain for backward compatibility but redirect to their replacements.
+They will be removed in a future release.
+
+[cols="2,3",options="header"]
+|===
+| Goal | Replacement
+
+| `ike:workspace`
+| Use the specific workspace goal (`ike:status`, `ike:verify`, etc.)
+
+| `ike:merge-to-main`
+| `ike:feature-finish`
+
+| `ike:release-from-feature`
+| `ike:feature-finish` followed by `ike:release`
+|===

@@ -1,0 +1,308 @@
+# workspace.yaml — IKE Workspace Manifest
+# ═══════════════════════════════════════
+#
+# This file IS the inter-repository dependency graph for the IKE
+# development workspace. It serves the same structural role at the
+# repository level that a POM serves for modules, an assembly map
+# serves for document topics, and a knowledge base definition serves
+# for concept sets.
+#
+# CURRENT STATE: This manifest reflects a transitional period.
+# Repos span three GitHub orgs (ikmdev, IKE-Community, knowledge-graphlet),
+# most inherit from the legacy dev.ikm.build:java-parent:1.73.0,
+# one POM is still Maven 4.0.0 namespace, and coordinated feature
+# branches are in use rather than main. The workspace captures this
+# reality and will evolve incrementally toward a unified structure.
+#
+# Design principles:
+#   - YAML because this is human-authored configuration with commentary.
+#   - Describes reality, not aspiration. Migration notes are inline.
+#   - depends-on captures inter-repo relationships Maven cannot express.
+#   - Groups enable partial operations without enumerating repos manually.
+#   - Builder-facing: this file drives `ws` CLI operations. Consumer-facing
+#     snapshots are checkpoint files (see ws checkpoint).
+
+schema-version: "1.0"
+generated: 2026-02-25
+
+defaults:
+  # No single default org — repos span three orgs.
+  # Each component specifies its own repo URL.
+  branch: main
+
+# ─── Component types ──────────────────────────────────────────────
+
+component-types:
+  infrastructure:
+    description: "Build tooling, parent POMs, shared resources"
+    build-command: "mvn clean install"
+    checkpoint-mechanism: git-tag
+  software:
+    description: "Java libraries and applications"
+    build-command: "mvn clean install"
+    checkpoint-mechanism: git-tag
+  document:
+    description: "AsciiDoc topic libraries and assemblies"
+    build-command: "mvn clean verify"
+    checkpoint-mechanism: git-tag
+  knowledge-source:
+    description: "Terminology/ontology source → Tinkar import"
+    build-command: "mvn clean install -Pimport"
+    checkpoint-mechanism: composite  # git-tag + view-coordinate
+  template:
+    description: "GitHub template repos for new projects"
+    build-command: "mvn clean install"
+    checkpoint-mechanism: git-tag
+
+# ─── Components ───────────────────────────────────────────────────
+#
+# Each component is a git repository. The dependency graph defined
+# by depends-on captures INTER-REPO relationships only.
+#
+# MIGRATION NOTES are inline where current state differs from target.
+# These document the incremental upgrade path without blocking
+# current functionality.
+
+components:
+
+  # ── Foundation: Java build conventions ──────────────────────────
+  #
+  # ike-parent provides Java build conventions (compiler settings,
+  # plugin management, dependency management). This is SEPARATE from
+  # ike-pipeline, which provides the AsciiDoc documentation pipeline.
+
+  ike-parent:
+    type: infrastructure
+    description: >
+      Parent POM for IKE Java projects. Provides Java 25 compiler
+      configuration, plugin management, dependency management, and
+      shared build conventions. Standalone repo — NOT part of
+      ike-pipeline.
+    repo: https://github.com/IKE-Community/ike-parent.git
+    branch: feature/rc-ike-flow
+    version: 1.0.2-rc-ike-flow-SNAPSHOT
+    groupId: sh.komet
+    depends-on: []
+    notes: >
+      MIGRATION: groupId is sh.komet (target: network.ike or dev.ikm).
+      Currently on feature branch rc-ike-flow. Most downstream repos
+      still inherit from dev.ikm.build:java-parent:1.73.0 rather
+      than this — migration to this parent is in progress.
+
+  ike-bom:
+    type: infrastructure
+    description: >
+      Bill of materials centralizing dependency versions for all IKE
+      incubator modules. Imported via dependencyManagement by
+      downstream projects.
+    repo: https://github.com/knowledge-graphlet/ike-bom.git
+    branch: feature/kec-jan-19
+    version: 3.0.7-kec-jan-19-SNAPSHOT
+    groupId: dev.ikm.ike
+    depends-on: []
+    notes: >
+      MIGRATION: Repo is in knowledge-graphlet org (target: IKE-Community).
+      Parent is dev.ikm.build:java-parent:1.73.0 (target: ike-parent).
+      On feature branch. Provides version alignment for tinkar-core,
+      komet, rocks-kb, and their transitive dependencies.
+
+  # ── Core: Knowledge architecture ────────────────────────────────
+
+  tinkar-core:
+    type: software
+    description: >
+      Knowledge architecture primitives: STAMP coordinates, component
+      model, pattern definitions, entity store API, description logic
+      (EL++) binding. The foundational library for all knowledge
+      management operations.
+    repo: https://github.com/ikmdev/tinkar-core.git
+    branch: feature/kec-jan-24
+    version: 1.127.2-kec-jan-24-SNAPSHOT
+    groupId: dev.ikm.tinkar
+    depends-on:
+      - component: ike-bom
+        relationship: build    # imports BOM for version management
+    notes: >
+      MIGRATION: Repo is in ikmdev org (target: IKE-Community).
+      Parent is dev.ikm.build:java-parent:1.73.0 (target: ike-parent).
+      POM uses 4.1.0 namespace.
+
+  rocks-kb:
+    type: software
+    description: >
+      RocksDB-backed knowledge base implementation. Provides
+      persistent storage for Tinkar entities.
+    repo: https://github.com/ikmdev/rocks-kb.git
+    branch: feature/kec-rocks-jan-25
+    version: 0.1.0-kec-rocks-jan-25-SNAPSHOT
+    groupId: dev.ikm.ike
+    depends-on:
+      - component: tinkar-core
+        relationship: build
+      - component: ike-bom
+        relationship: build
+    notes: >
+      MIGRATION: Repo is in ikmdev org (target: IKE-Community).
+      Parent is dev.ikm.build:java-parent:1.73.0 (target: ike-parent).
+
+  extra-tools:
+    type: software
+    description: >
+      Supplemental development tools. Knowledge source artifact
+      packaging via assembly plugin.
+    repo: https://github.com/IKE-Community/extra-tools.git
+    branch: develop
+    version: 1.0.0-SNAPSHOT
+    groupId: dev.ikm
+    depends-on:
+      - component: ike-parent
+        relationship: build    # parent POM: dev.ikm:ike-parent:1.0.0-SNAPSHOT
+    notes: >
+      On develop branch (gitflow). Parent is dev.ikm:ike-parent
+      (the sh.komet one) at 1.0.0-SNAPSHOT — may not resolve if
+      ike-parent is on a feature branch version.
+
+  # ── Application: Komet ──────────────────────────────────────────
+
+  komet:
+    type: software
+    description: >
+      Knowledge graph editor. JavaFX application for authoring,
+      navigating, and validating knowledge content.
+    repo: https://github.com/ikmdev/komet.git
+    branch: feature/kec-jan-24
+    version: 1.58.0-kec-jan-24-SNAPSHOT
+    groupId: dev.ikm.komet
+    depends-on:
+      - component: tinkar-core
+        relationship: build
+      - component: rocks-kb
+        relationship: build
+      - component: ike-bom
+        relationship: build
+    notes: >
+      MIGRATION: Repo is in ikmdev org (target: IKE-Community).
+      POM is STILL Maven 4.0.0 namespace (target: 4.1.0).
+      Parent is dev.ikm.build:java-parent:1.73.0 (target: ike-parent).
+
+  komet-desktop:
+    type: software
+    description: >
+      Desktop distribution of Komet via jlink. Produces
+      platform-specific installers (macOS, Windows, Linux).
+    repo: https://github.com/ikmdev/komet-desktop.git
+    branch: feature/kec-jan-19
+    version: 3.0.0-kec-jan-19-SNAPSHOT
+    groupId: dev.ikm.build   # inherited from java-parent
+    depends-on:
+      - component: komet
+        relationship: build
+      - component: ike-bom
+        relationship: build
+    notes: >
+      MIGRATION: Repo is in ikmdev org (target: IKE-Community).
+      groupId inherited from java-parent (target: explicit IKE groupId).
+
+  # ── Templates ───────────────────────────────────────────────────
+
+  ike-knowledge-source-template:
+    type: template
+    description: >
+      GitHub template repository for creating new knowledge source
+      projects (SNOMED, LOINC, etc.).
+    repo: https://github.com/IKE-Community/ike-knowledge-source-template.git
+    branch: develop
+    version: ~
+    groupId: ~
+    depends-on: []
+    notes: >
+      Commented out of the MacStudio aggregator POM. On develop branch.
+      Template repo — not typically built as part of the reactor.
+
+  # ── Documentation pipeline (IKE-sandbox) ────────────────────────
+  #
+  # These are in a separate ecosystem from the MacStudio Java repos.
+  # They share no parent POM lineage with the ikmdev/IKE-Community
+  # Java repos — they use the ike-pipeline's ike-parent (network.ike),
+  # not the Java ike-parent (sh.komet).
+
+  ike-pipeline:
+    type: infrastructure
+    description: >
+      Documentation pipeline: AsciiDoc renderers, doc resources,
+      Maven plugin, AsciiDoc extensions, build standards. Contains
+      its own ike-parent (network.ike groupId) which is separate
+      from the Java ike-parent (sh.komet groupId).
+    repo: https://github.com/IKE-Community/ike-pipeline.git
+    branch: main
+    version: 1.1.0-SNAPSHOT
+    groupId: network.ike
+    depends-on: []
+    notes: >
+      This is the doc infrastructure reactor from IKE-sandbox.
+      Its ike-parent artifact (network.ike:ike-parent) serves
+      document projects. The Java ike-parent (sh.komet:ike-parent)
+      serves Java projects. These will eventually merge.
+
+  ike-lab-documents:
+    type: document
+    description: >
+      IKE Lab topic library and assembly documents (~300 topics).
+    repo: https://github.com/IKE-Community/ike-lab-documents.git
+    branch: main
+    version: ~
+    groupId: network.ike
+    depends-on:
+      - component: ike-pipeline
+        relationship: build
+      - component: tinkar-core
+        relationship: content
+      - component: komet
+        relationship: content
+
+  ike-infrastructure:
+    type: document
+    description: >
+      Build infrastructure documentation.
+    repo: https://github.com/IKE-Community/ike-infrastructure.git
+    branch: main
+    version: ~
+    groupId: network.ike
+    depends-on:
+      - component: ike-pipeline
+        relationship: build
+
+  ike:
+    type: document
+    description: >
+      Root site for IKE Community documentation at ike.network.
+    repo: https://github.com/IKE-Community/ike.git
+    branch: main
+    version: ~
+    groupId: network.ike
+    depends-on:
+      - component: ike-pipeline
+        relationship: build
+
+# ─── Groups ───────────────────────────────────────────────────────
+#
+# Named subsets for partial workspace operations.
+#
+# The "studio" group matches the MacStudio aggregator's subprojects
+# list — this is the set of repos that build together for the Java
+# application stack.
+
+groups:
+  # The MacStudio reactor (matches IKE.studio/pom.xml subprojects)
+  studio: [ike-parent, ike-bom, extra-tools, tinkar-core, rocks-kb, komet, komet-desktop]
+
+  # The doc pipeline (matches IKE-sandbox working set)
+  docs: [ike-pipeline, ike-lab-documents, ike-infrastructure, ike]
+
+  # Layered subsets for partial builds
+  foundation: [ike-parent, ike-bom]
+  core: [foundation, tinkar-core, rocks-kb]
+  app: [komet, komet-desktop]
+
+  # Everything
+  all: [studio, docs, ike-knowledge-source-template]
