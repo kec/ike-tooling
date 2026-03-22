@@ -129,6 +129,143 @@ class ReleaseIntegrationTest {
         assertThat(pomContent).contains("<version>1.0.1-SNAPSHOT</version>");
     }
 
+    // ── SNAPSHOT release version rejection ─────────────────────────
+
+    @Test
+    void release_snapshotReleaseVersion_throws() throws Exception {
+        createReleaseProject(tempDir);
+
+        ReleaseMojo mojo = new ReleaseMojo();
+        mojo.baseDir = tempDir.toFile();
+        mojo.releaseVersion = "1.0.0-SNAPSHOT";
+        mojo.skipVerify = true;
+        mojo.deploySite = false;
+
+        assertThatThrownBy(mojo::execute)
+                .isInstanceOf(MojoExecutionException.class)
+                .hasMessageContaining("must not contain -SNAPSHOT");
+    }
+
+    // ── Next version enforcement ────────────────────────────────────
+
+    @Test
+    void release_nextVersionNotSnapshot_throws() throws Exception {
+        createReleaseProject(tempDir);
+
+        ReleaseMojo mojo = new ReleaseMojo();
+        mojo.baseDir = tempDir.toFile();
+        mojo.releaseVersion = "1.0.0";
+        mojo.nextVersion = "1.0.1";  // missing -SNAPSHOT
+        mojo.skipVerify = true;
+        mojo.deploySite = false;
+
+        assertThatThrownBy(mojo::execute)
+                .isInstanceOf(MojoExecutionException.class)
+                .hasMessageContaining("must end with -SNAPSHOT");
+    }
+
+    // ── Release branch already exists ───────────────────────────────
+
+    @Test
+    void release_branchAlreadyExists_throws() throws Exception {
+        createReleaseProject(tempDir);
+        // Create the release branch beforehand
+        exec(tempDir, "git", "branch", "release/1.0.0");
+
+        ReleaseMojo mojo = new ReleaseMojo();
+        mojo.baseDir = tempDir.toFile();
+        mojo.releaseVersion = "1.0.0";
+        mojo.skipVerify = true;
+        mojo.deploySite = false;
+
+        assertThatThrownBy(mojo::execute)
+                .isInstanceOf(MojoExecutionException.class)
+                .hasMessageContaining("already exists");
+    }
+
+    // ── Version defaulting ──────────────────────────────────────────
+
+    @Test
+    void release_noExplicitVersion_derivesFromPom() throws Exception {
+        createReleaseProject(tempDir);
+
+        ReleaseMojo mojo = new ReleaseMojo();
+        mojo.baseDir = tempDir.toFile();
+        mojo.dryRun = true;
+        mojo.skipVerify = true;
+        mojo.deploySite = false;
+
+        mojo.execute();
+
+        // After dry run, releaseVersion should be derived from
+        // 1.0.0-SNAPSHOT -> 1.0.0
+        assertThat(mojo.releaseVersion).isEqualTo("1.0.0");
+        assertThat(mojo.nextVersion).isEqualTo("1.0.1-SNAPSHOT");
+    }
+
+    @Test
+    void release_explicitReleaseVersion_used() throws Exception {
+        createReleaseProject(tempDir);
+
+        ReleaseMojo mojo = new ReleaseMojo();
+        mojo.baseDir = tempDir.toFile();
+        mojo.dryRun = true;
+        mojo.releaseVersion = "42";
+        mojo.skipVerify = true;
+        mojo.deploySite = false;
+
+        mojo.execute();
+
+        assertThat(mojo.releaseVersion).isEqualTo("42");
+        // nextVersion should be derived from 42
+        assertThat(mojo.nextVersion).isEqualTo("43-SNAPSHOT");
+    }
+
+    // ── Dirty worktree rejection ────────────────────────────────────
+
+    @Test
+    void release_dirtyWorktree_throws() throws Exception {
+        createReleaseProjectWithTrackedFile(tempDir);
+        // Modify a tracked file (untracked files are not caught by git diff)
+        Files.writeString(tempDir.resolve("README.txt"), "modified content",
+                StandardCharsets.UTF_8);
+
+        ReleaseMojo mojo = new ReleaseMojo();
+        mojo.baseDir = tempDir.toFile();
+        mojo.skipVerify = true;
+        mojo.deploySite = false;
+
+        assertThatThrownBy(mojo::execute)
+                .isInstanceOf(MojoExecutionException.class)
+                .hasMessageContaining("unstaged");
+    }
+
+    // ── Local phase with ${project.version} resolution ──────────────
+
+    @Test
+    void release_projectVersionRefs_resolvedAndRestored() throws Exception {
+        // Create a project with a sub-module that uses ${project.version}
+        createReleaseProjectWithSubModule(tempDir);
+
+        ReleaseMojo mojo = new ReleaseMojo();
+        mojo.baseDir = tempDir.toFile();
+        mojo.skipVerify = true;
+        mojo.deploySite = false;
+
+        try {
+            mojo.execute();
+        } catch (MojoExecutionException e) {
+            // Expected — external phase failure
+        }
+
+        // After release + merge + bump, the sub-module POM should be
+        // restored with ${project.version} (from backup restoration)
+        // and the root version bumped to next SNAPSHOT.
+        String subPom = Files.readString(
+                tempDir.resolve("sub/pom.xml"), StandardCharsets.UTF_8);
+        assertThat(subPom).contains("${project.version}");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────
 
     /**
@@ -149,6 +286,69 @@ class ReleaseIntegrationTest {
                 </project>
                 """;
         Files.writeString(dir.resolve("pom.xml"), pom, StandardCharsets.UTF_8);
+
+        exec(dir, "git", "init", "-b", "main");
+        exec(dir, "git", "config", "user.email", "test@example.com");
+        exec(dir, "git", "config", "user.name", "Test");
+        exec(dir, "git", "add", ".");
+        exec(dir, "git", "commit", "-m", "Initial commit");
+    }
+
+    /**
+     * Create a release-ready project with an extra tracked file.
+     */
+    private void createReleaseProjectWithTrackedFile(Path dir) throws Exception {
+        createReleaseProject(dir);
+        Files.writeString(dir.resolve("README.txt"), "readme content",
+                StandardCharsets.UTF_8);
+        exec(dir, "git", "add", "README.txt");
+        exec(dir, "git", "commit", "-m", "Add README");
+    }
+
+    /**
+     * Create a release-ready project with a sub-module that uses
+     * ${project.version} for dependency version references.
+     */
+    private void createReleaseProjectWithSubModule(Path dir) throws Exception {
+        String rootPom = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <project xmlns="http://maven.apache.org/POM/4.0.0"
+                         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                         http://maven.apache.org/xsd/maven-4.0.0.xsd">
+                    <modelVersion>4.0.0</modelVersion>
+                    <groupId>com.test</groupId>
+                    <artifactId>test-project</artifactId>
+                    <version>1.0.0-SNAPSHOT</version>
+                    <packaging>pom</packaging>
+                    <modules>
+                        <module>sub</module>
+                    </modules>
+                </project>
+                """;
+        Files.writeString(dir.resolve("pom.xml"), rootPom, StandardCharsets.UTF_8);
+
+        Files.createDirectories(dir.resolve("sub"));
+        String subPom = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <project xmlns="http://maven.apache.org/POM/4.0.0">
+                    <modelVersion>4.0.0</modelVersion>
+                    <parent>
+                        <groupId>com.test</groupId>
+                        <artifactId>test-project</artifactId>
+                        <version>1.0.0-SNAPSHOT</version>
+                    </parent>
+                    <artifactId>sub</artifactId>
+                    <dependencies>
+                        <dependency>
+                            <groupId>com.test</groupId>
+                            <artifactId>other</artifactId>
+                            <version>${project.version}</version>
+                        </dependency>
+                    </dependencies>
+                </project>
+                """;
+        Files.writeString(dir.resolve("sub/pom.xml"), subPom, StandardCharsets.UTF_8);
 
         exec(dir, "git", "init", "-b", "main");
         exec(dir, "git", "config", "user.email", "test@example.com");

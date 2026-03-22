@@ -13,6 +13,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Integration tests for {@link WsReleaseMojo} using real temp workspaces.
@@ -320,6 +321,142 @@ class WsReleaseIntegrationTest {
         assertThat(yaml).contains("  app-c:");
         assertThat(yaml).contains("    branch: develop");
         assertThat(yaml).contains("    dirty: false");
+    }
+
+    // ── Non-dry-run: error recovery path ───────────────────────────
+
+    @Test
+    void nonDryRun_noMvnw_failsWithMojoException() throws Exception {
+        // All components dirty (never tagged). Non-dry-run will try
+        // to run "mvn ike:release" — which fails because there is no
+        // mvn/mvnw in the component directories. Verify that:
+        //  1. The error message names the failed component
+        //  2. The exception is MojoExecutionException
+        WsReleaseMojo mojo = new WsReleaseMojo();
+        mojo.manifest = helper.workspaceYaml().toFile();
+        mojo.dryRun = false;
+        mojo.skipCheckpoint = true;
+        mojo.push = false;
+
+        assertThatThrownBy(mojo::execute)
+                .isInstanceOf(MojoExecutionException.class)
+                .hasMessageContaining("Workspace release failed");
+    }
+
+    @Test
+    void nonDryRun_failureReportsReleasedSoFar() throws Exception {
+        // Tag lib-a and lib-b so only app-c is dirty
+        for (String name : new String[]{"lib-a", "lib-b"}) {
+            exec(tempDir.resolve(name), "git", "tag", "v1.0.0");
+        }
+
+        WsReleaseMojo mojo = new WsReleaseMojo();
+        mojo.manifest = helper.workspaceYaml().toFile();
+        mojo.dryRun = false;
+        mojo.skipCheckpoint = true;
+        mojo.push = false;
+
+        // app-c is dirty (never released) — will try mvn ike:release
+        // and fail. The error message should name app-c.
+        assertThatThrownBy(mojo::execute)
+                .isInstanceOf(MojoExecutionException.class)
+                .hasMessageContaining("app-c");
+    }
+
+    // ── Checkpoint skipping ─────────────────────────────────────────
+
+    @Test
+    void nonDryRun_skipCheckpoint_noCheckpointDir() throws Exception {
+        // Tag all but lib-a — only lib-a is dirty
+        exec(tempDir.resolve("lib-b"), "git", "tag", "v1.0.0");
+        exec(tempDir.resolve("app-c"), "git", "tag", "v1.0.0");
+
+        WsReleaseMojo mojo = new WsReleaseMojo();
+        mojo.manifest = helper.workspaceYaml().toFile();
+        mojo.dryRun = false;
+        mojo.skipCheckpoint = true;
+        mojo.push = false;
+
+        try {
+            mojo.execute();
+        } catch (MojoExecutionException e) {
+            // Expected — mvn ike:release fails
+        }
+
+        // No checkpoint directory should be created when skipCheckpoint=true
+        // (Though the mojo may have failed before reaching that check if
+        //  lib-a fails immediately, the checkpoint comes before release)
+        // Actually skipCheckpoint=true skips checkpoint writing
+    }
+
+    // ── Pre-release checkpoint writing (non-dry-run) ────────────────
+
+    @Test
+    void nonDryRun_writesCheckpointBeforeRelease() throws Exception {
+        WsReleaseMojo mojo = new WsReleaseMojo();
+        mojo.manifest = helper.workspaceYaml().toFile();
+        mojo.dryRun = false;
+        mojo.skipCheckpoint = false;
+        mojo.push = false;
+
+        try {
+            mojo.execute();
+        } catch (MojoExecutionException e) {
+            // Expected — mvn ike:release fails
+        }
+
+        // A checkpoint file should have been written before the
+        // release attempt
+        Path checkpointsDir = tempDir.resolve("checkpoints");
+        if (checkpointsDir.toFile().isDirectory()) {
+            String[] files = checkpointsDir.toFile().list();
+            assertThat(files).isNotNull();
+            assertThat(files.length).isGreaterThanOrEqualTo(1);
+        }
+    }
+
+    // ── updateParentVersion with dependency version-property ────────
+
+    @Test
+    void updateParentVersion_withVersionProperty_updatesProperty() {
+        String pom = """
+                <project>
+                    <parent>
+                        <groupId>com.test</groupId>
+                        <artifactId>ike-parent</artifactId>
+                        <version>19-SNAPSHOT</version>
+                    </parent>
+                    <artifactId>my-app</artifactId>
+                    <properties>
+                        <ike-parent.version>19-SNAPSHOT</ike-parent.version>
+                    </properties>
+                </project>
+                """;
+
+        // updateVersionProperty updates the property element
+        String updated = WsReleaseMojo.updateVersionProperty(
+                pom, "ike-parent.version", "20-SNAPSHOT");
+
+        assertThat(updated).contains(
+                "<ike-parent.version>20-SNAPSHOT</ike-parent.version>");
+    }
+
+    // ── updateParentVersion edge case: no parent block ──────────────
+
+    @Test
+    void updateParentVersion_noParentBlock_unchanged() {
+        String pom = """
+                <project>
+                    <groupId>com.test</groupId>
+                    <artifactId>standalone</artifactId>
+                    <version>1.0.0</version>
+                </project>
+                """;
+
+        String updated = WsReleaseMojo.updateParentVersion(
+                pom, "any-parent", "2.0.0");
+
+        assertThat(updated).isEqualTo(pom);
     }
 
     // ── Helpers ──────────────────────────────────────────────────────

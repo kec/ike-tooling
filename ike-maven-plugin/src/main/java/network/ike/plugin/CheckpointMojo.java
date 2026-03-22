@@ -37,23 +37,27 @@ public class CheckpointMojo extends AbstractMojo {
     private static final String SITE_BASE = "scpexe://proxy/srv/ike-site/";
 
     @Parameter(property = "checkpointLabel")
-    private String checkpointLabel;
+    String checkpointLabel;
 
     @Parameter(property = "deploySite", defaultValue = "true")
-    private boolean deploySite;
+    boolean deploySite;
 
     @Parameter(property = "dryRun", defaultValue = "false")
-    private boolean dryRun;
+    boolean dryRun;
 
     @Parameter(property = "skipVerify", defaultValue = "false")
-    private boolean skipVerify;
+    boolean skipVerify;
+
+    /** Override working directory for tests. If null, uses current directory. */
+    File baseDir;
 
     /** Creates this goal instance. */
     public CheckpointMojo() {}
 
     @Override
     public void execute() throws MojoExecutionException {
-        File gitRoot = ReleaseSupport.gitRoot(new File("."));
+        File startDir = baseDir != null ? baseDir : new File(".");
+        File gitRoot = ReleaseSupport.gitRoot(startDir);
         File mvnw = ReleaseSupport.resolveMavenWrapper(gitRoot, getLog());
         File rootPom = new File(gitRoot, "pom.xml");
 

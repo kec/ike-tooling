@@ -1,6 +1,8 @@
 package network.ike.plugin;
 
 import org.apache.maven.plugin.MojoExecutionException;
+import org.apache.maven.plugin.logging.Log;
+import org.apache.maven.plugin.logging.SystemStreamLog;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -9,8 +11,11 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
@@ -464,11 +469,396 @@ class ReleaseSupportTest {
         assertThat(restored).isEmpty();
     }
 
+    // ── routeSubprocessLine ─────────────────────────────────────────
+
+    @Test
+    void routeSubprocessLine_errorPrefix_routesToError() {
+        var log = new CapturingLog();
+        ReleaseSupport.routeSubprocessLine(log, "[ERROR] Something went wrong");
+        assertThat(log.errors).containsExactly("Something went wrong");
+    }
+
+    @Test
+    void routeSubprocessLine_warningPrefix_routesToWarn() {
+        var log = new CapturingLog();
+        ReleaseSupport.routeSubprocessLine(log, "[WARNING] Deprecated API");
+        assertThat(log.warnings).containsExactly("Deprecated API");
+    }
+
+    @Test
+    void routeSubprocessLine_infoPrefix_routesToInfo() {
+        var log = new CapturingLog();
+        ReleaseSupport.routeSubprocessLine(log, "[INFO] Building project");
+        assertThat(log.infos).containsExactly("Building project");
+    }
+
+    @Test
+    void routeSubprocessLine_debugPrefix_routesToDebug() {
+        var log = new CapturingLog();
+        ReleaseSupport.routeSubprocessLine(log, "[DEBUG] Classpath entry");
+        assertThat(log.debugs).containsExactly("Classpath entry");
+    }
+
+    @Test
+    void routeSubprocessLine_jvmWarning_routesToWarn() {
+        var log = new CapturingLog();
+        ReleaseSupport.routeSubprocessLine(log, "WARNING: sun.misc.Unsafe deprecated");
+        assertThat(log.warnings).containsExactly("sun.misc.Unsafe deprecated");
+    }
+
+    @Test
+    void routeSubprocessLine_jvmError_routesToError() {
+        var log = new CapturingLog();
+        ReleaseSupport.routeSubprocessLine(log, "ERROR: fatal JVM error");
+        assertThat(log.errors).containsExactly("fatal JVM error");
+    }
+
+    @Test
+    void routeSubprocessLine_plainText_routesToInfo() {
+        var log = new CapturingLog();
+        ReleaseSupport.routeSubprocessLine(log, "Just a plain line");
+        assertThat(log.infos).containsExactly("Just a plain line");
+    }
+
+    @Test
+    void routeSubprocessLine_withPrefix_prependsLabel() {
+        var log = new CapturingLog();
+        ReleaseSupport.routeSubprocessLine(log, "[INFO] Building", "[nexus] ");
+        assertThat(log.infos).containsExactly("[nexus] Building");
+    }
+
+    // ── exec / execCapture (with real processes) ────────────────────
+
+    @Test
+    void exec_successfulCommand_noException(@TempDir Path tmpDir) {
+        var log = new SystemStreamLog();
+        assertThatCode(() ->
+                ReleaseSupport.exec(tmpDir.toFile(), log, "echo", "hello"))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void exec_failingCommand_throwsWithExitCode(@TempDir Path tmpDir) {
+        var log = new SystemStreamLog();
+        assertThatThrownBy(() ->
+                ReleaseSupport.exec(tmpDir.toFile(), log, "false"))
+                .isInstanceOf(MojoExecutionException.class)
+                .hasMessageContaining("exit 1");
+    }
+
+    @Test
+    void execCapture_capturesOutput(@TempDir Path tmpDir) throws Exception {
+        String result = ReleaseSupport.execCapture(tmpDir.toFile(),
+                "echo", "hello world");
+        assertThat(result).isEqualTo("hello world");
+    }
+
+    @Test
+    void execCapture_failingCommand_throws(@TempDir Path tmpDir) {
+        assertThatThrownBy(() ->
+                ReleaseSupport.execCapture(tmpDir.toFile(), "false"))
+                .isInstanceOf(MojoExecutionException.class)
+                .hasMessageContaining("exit 1");
+    }
+
+    // ── execParallel ────────────────────────────────────────────────
+
+    @Test
+    void execParallel_twoSuccessfulTasks(@TempDir Path tmpDir) {
+        var log = new SystemStreamLog();
+        assertThatCode(() -> ReleaseSupport.execParallel(
+                tmpDir.toFile(), log,
+                new ReleaseSupport.LabeledTask("a", new String[]{"echo", "alpha"}),
+                new ReleaseSupport.LabeledTask("b", new String[]{"echo", "beta"})
+        )).doesNotThrowAnyException();
+    }
+
+    @Test
+    void execParallel_oneFailingTask_throwsWithLabel(@TempDir Path tmpDir) {
+        var log = new SystemStreamLog();
+        assertThatThrownBy(() -> ReleaseSupport.execParallel(
+                tmpDir.toFile(), log,
+                new ReleaseSupport.LabeledTask("good", new String[]{"echo", "ok"}),
+                new ReleaseSupport.LabeledTask("bad", new String[]{"false"})
+        ))
+                .isInstanceOf(MojoExecutionException.class)
+                .hasMessageContaining("bad");
+    }
+
+    @Test
+    void execParallel_bothFailing_reportsAll(@TempDir Path tmpDir) {
+        var log = new SystemStreamLog();
+        assertThatThrownBy(() -> ReleaseSupport.execParallel(
+                tmpDir.toFile(), log,
+                new ReleaseSupport.LabeledTask("task1", new String[]{"false"}),
+                new ReleaseSupport.LabeledTask("task2", new String[]{"false"})
+        ))
+                .isInstanceOf(MojoExecutionException.class)
+                .hasMessageContaining("task1")
+                .hasMessageContaining("task2");
+    }
+
+    // ── gitAddFiles ─────────────────────────────────────────────────
+
+    @Test
+    void gitAddFiles_emptyList_noOp(@TempDir Path tmpDir) throws Exception {
+        initGitRepo(tmpDir);
+        var log = new SystemStreamLog();
+
+        // Should not throw — empty list is a no-op
+        assertThatCode(() ->
+                ReleaseSupport.gitAddFiles(tmpDir.toFile(), log, List.of()))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void gitAddFiles_stagesFiles(@TempDir Path tmpDir) throws Exception {
+        initGitRepo(tmpDir);
+        var log = new SystemStreamLog();
+
+        // Create a new file
+        Path newFile = tmpDir.resolve("new.txt");
+        Files.writeString(newFile, "new content", StandardCharsets.UTF_8);
+
+        ReleaseSupport.gitAddFiles(tmpDir.toFile(), log,
+                List.of(newFile.toFile()));
+
+        // Verify the file is staged
+        String status = execCapture(tmpDir, "git", "status", "--porcelain");
+        assertThat(status).contains("A  new.txt");
+    }
+
+    // ── hasRemote ───────────────────────────────────────────────────
+
+    @Test
+    void hasRemote_noRemotes_returnsFalse(@TempDir Path tmpDir) throws Exception {
+        initGitRepo(tmpDir);
+        assertThat(ReleaseSupport.hasRemote(tmpDir.toFile(), "origin"))
+                .isFalse();
+    }
+
+    @Test
+    void hasRemote_originExists_returnsTrue(@TempDir Path tmpDir) throws Exception {
+        initGitRepo(tmpDir);
+        exec(tmpDir, "git", "remote", "add", "origin", "https://example.com/repo.git");
+
+        assertThat(ReleaseSupport.hasRemote(tmpDir.toFile(), "origin"))
+                .isTrue();
+    }
+
+    @Test
+    void hasRemote_differentRemote_returnsFalse(@TempDir Path tmpDir) throws Exception {
+        initGitRepo(tmpDir);
+        exec(tmpDir, "git", "remote", "add", "upstream", "https://example.com/repo.git");
+
+        assertThat(ReleaseSupport.hasRemote(tmpDir.toFile(), "origin"))
+                .isFalse();
+    }
+
+    // ── requireCleanWorktree ────────────────────────────────────────
+
+    @Test
+    void requireCleanWorktree_clean_noException(@TempDir Path tmpDir) throws Exception {
+        initGitRepo(tmpDir);
+
+        assertThatCode(() ->
+                ReleaseSupport.requireCleanWorktree(tmpDir.toFile()))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void requireCleanWorktree_unstagedChanges_throws(@TempDir Path tmpDir) throws Exception {
+        initGitRepo(tmpDir);
+        // Modify the committed file
+        Files.writeString(tmpDir.resolve("init.txt"), "modified",
+                StandardCharsets.UTF_8);
+
+        assertThatThrownBy(() ->
+                ReleaseSupport.requireCleanWorktree(tmpDir.toFile()))
+                .isInstanceOf(MojoExecutionException.class)
+                .hasMessageContaining("unstaged");
+    }
+
+    @Test
+    void requireCleanWorktree_stagedChanges_throws(@TempDir Path tmpDir) throws Exception {
+        initGitRepo(tmpDir);
+        Files.writeString(tmpDir.resolve("staged.txt"), "new",
+                StandardCharsets.UTF_8);
+        exec(tmpDir, "git", "add", "staged.txt");
+
+        assertThatThrownBy(() ->
+                ReleaseSupport.requireCleanWorktree(tmpDir.toFile()))
+                .isInstanceOf(MojoExecutionException.class)
+                .hasMessageContaining("staged");
+    }
+
+    // ── currentBranch ───────────────────────────────────────────────
+
+    @Test
+    void currentBranch_returnsMainByDefault(@TempDir Path tmpDir) throws Exception {
+        initGitRepo(tmpDir);
+        assertThat(ReleaseSupport.currentBranch(tmpDir.toFile()))
+                .isEqualTo("main");
+    }
+
+    @Test
+    void currentBranch_afterCheckout(@TempDir Path tmpDir) throws Exception {
+        initGitRepo(tmpDir);
+        exec(tmpDir, "git", "checkout", "-b", "feature/test");
+
+        assertThat(ReleaseSupport.currentBranch(tmpDir.toFile()))
+                .isEqualTo("feature/test");
+    }
+
+    // ── gitRoot ─────────────────────────────────────────────────────
+
+    @Test
+    void gitRoot_returnsRepoRoot(@TempDir Path tmpDir) throws Exception {
+        initGitRepo(tmpDir);
+        Path subDir = tmpDir.resolve("a/b/c");
+        Files.createDirectories(subDir);
+
+        File root = ReleaseSupport.gitRoot(subDir.toFile());
+        assertThat(root.getCanonicalPath())
+                .isEqualTo(tmpDir.toFile().getCanonicalPath());
+    }
+
+    // ── tagExists ───────────────────────────────────────────────────
+
+    @Test
+    void tagExists_existingTag_returnsTrue(@TempDir Path tmpDir) throws Exception {
+        initGitRepo(tmpDir);
+        exec(tmpDir, "git", "tag", "v1.0.0");
+
+        assertThat(ReleaseSupport.tagExists(tmpDir.toFile(), "v1.0.0"))
+                .isTrue();
+    }
+
+    @Test
+    void tagExists_missingTag_returnsFalse(@TempDir Path tmpDir) throws Exception {
+        initGitRepo(tmpDir);
+
+        assertThat(ReleaseSupport.tagExists(tmpDir.toFile(), "v999"))
+                .isFalse();
+    }
+
+    // ── deriveCheckpointVersion ─────────────────────────────────────
+
+    @Test
+    void deriveCheckpointVersion_noExistingTags(@TempDir Path tmpDir) throws Exception {
+        initGitRepo(tmpDir);
+
+        String version = ReleaseSupport.deriveCheckpointVersion(
+                "2.0.0-SNAPSHOT", tmpDir.toFile());
+
+        assertThat(version)
+                .startsWith("2.0.0-checkpoint.")
+                .endsWith(".1");
+    }
+
+    @Test
+    void deriveCheckpointVersion_incrementsSequence(@TempDir Path tmpDir) throws Exception {
+        initGitRepo(tmpDir);
+
+        // Derive version first to get the expected tag name
+        String version1 = ReleaseSupport.deriveCheckpointVersion(
+                "2.0.0-SNAPSHOT", tmpDir.toFile());
+
+        // Create that tag
+        exec(tmpDir, "git", "tag", "checkpoint/" + version1);
+
+        // Derive again — should increment sequence
+        String version2 = ReleaseSupport.deriveCheckpointVersion(
+                "2.0.0-SNAPSHOT", tmpDir.toFile());
+
+        assertThat(version2).endsWith(".2");
+    }
+
+    // ── resolveMavenWrapper ─────────────────────────────────────────
+
+    @Test
+    void resolveMavenWrapper_withWrapper(@TempDir Path tmpDir) throws Exception {
+        initGitRepo(tmpDir);
+        Path mvnw = tmpDir.resolve("mvnw");
+        Files.writeString(mvnw, "#!/bin/sh\necho mvnw", StandardCharsets.UTF_8);
+        mvnw.toFile().setExecutable(true);
+
+        File result = ReleaseSupport.resolveMavenWrapper(
+                tmpDir.toFile(), new SystemStreamLog());
+        assertThat(result.getAbsolutePath()).isEqualTo(mvnw.toAbsolutePath().toString());
+    }
+
     // ── helper ──────────────────────────────────────────────────────
 
     private static File writePom(Path dir, String content) throws IOException {
         Path pomPath = dir.resolve("pom.xml");
         Files.writeString(pomPath, content, StandardCharsets.UTF_8);
         return pomPath.toFile();
+    }
+
+    private void initGitRepo(Path dir) throws Exception {
+        Files.writeString(dir.resolve("init.txt"), "init", StandardCharsets.UTF_8);
+        exec(dir, "git", "init", "-b", "main");
+        exec(dir, "git", "config", "user.email", "test@example.com");
+        exec(dir, "git", "config", "user.name", "Test");
+        exec(dir, "git", "add", ".");
+        exec(dir, "git", "commit", "-m", "Initial commit");
+    }
+
+    private void exec(Path workDir, String... command) throws Exception {
+        Process process = new ProcessBuilder(command)
+                .directory(workDir.toFile())
+                .redirectErrorStream(true)
+                .start();
+        process.getInputStream().readAllBytes();
+        int exitCode = process.waitFor();
+        if (exitCode != 0) {
+            throw new RuntimeException(
+                    "Command failed (exit " + exitCode + "): "
+                            + String.join(" ", command));
+        }
+    }
+
+    private String execCapture(Path workDir, String... command) throws Exception {
+        Process process = new ProcessBuilder(command)
+                .directory(workDir.toFile())
+                .redirectErrorStream(true)
+                .start();
+        String output = new String(process.getInputStream().readAllBytes(),
+                StandardCharsets.UTF_8).trim();
+        int exitCode = process.waitFor();
+        if (exitCode != 0) {
+            throw new RuntimeException(
+                    "Command failed (exit " + exitCode + "): "
+                            + String.join(" ", command));
+        }
+        return output;
+    }
+
+    /**
+     * Simple log implementation that captures messages by level.
+     */
+    private static class CapturingLog implements Log {
+        final List<String> debugs = new ArrayList<>();
+        final List<String> infos = new ArrayList<>();
+        final List<String> warnings = new ArrayList<>();
+        final List<String> errors = new ArrayList<>();
+
+        @Override public boolean isDebugEnabled() { return true; }
+        @Override public void debug(CharSequence content) { debugs.add(content.toString()); }
+        @Override public void debug(CharSequence content, Throwable error) { debugs.add(content.toString()); }
+        @Override public void debug(Throwable error) { debugs.add(error.getMessage()); }
+        @Override public boolean isInfoEnabled() { return true; }
+        @Override public void info(CharSequence content) { infos.add(content.toString()); }
+        @Override public void info(CharSequence content, Throwable error) { infos.add(content.toString()); }
+        @Override public void info(Throwable error) { infos.add(error.getMessage()); }
+        @Override public boolean isWarnEnabled() { return true; }
+        @Override public void warn(CharSequence content) { warnings.add(content.toString()); }
+        @Override public void warn(CharSequence content, Throwable error) { warnings.add(content.toString()); }
+        @Override public void warn(Throwable error) { warnings.add(error.getMessage()); }
+        @Override public boolean isErrorEnabled() { return true; }
+        @Override public void error(CharSequence content) { errors.add(content.toString()); }
+        @Override public void error(CharSequence content, Throwable error) { errors.add(content.toString()); }
+        @Override public void error(Throwable error) { errors.add(error.getMessage()); }
     }
 }
