@@ -279,13 +279,27 @@ public class ReleaseMojo extends AbstractMojo {
 
                 getLog().info("Deploying site to staging...");
                 ReleaseSupport.cleanRemoteSiteDir(gitRoot, getLog(), stagingDisk);
-                // Run verify before site so JaCoCo coverage data is generated.
+                // Run verify first so JaCoCo coverage data is generated.
                 // The tag checkout wiped target/, so jacoco.exec must be
                 // recreated for the coverage report to appear in the site.
+                ReleaseSupport.exec(gitRoot, getLog(),
+                        mvnw.getAbsolutePath(), "verify", "-B", "-T", "1");
+
+                // Inject breadcrumbs and theme into JaCoCo HTML reports.
+                // This must run after verify (which generates jacoco HTML)
+                // but before site:stage (which packages the site).
+                // Uses ike:inject-breadcrumb on each submodule that has
+                // JaCoCo output.
+                getLog().info("Injecting breadcrumbs into JaCoCo reports...");
+                ReleaseSupport.exec(gitRoot, getLog(),
+                        mvnw.getAbsolutePath(), "ike:inject-breadcrumb",
+                        "-B", "-T", "1");
+
+                // Build site and deploy to staging.
                 // -T 1: maven-site-plugin is not @ThreadSafe; sequential
                 // execution avoids spurious warnings in parallel sessions.
                 ReleaseSupport.exec(gitRoot, getLog(),
-                        mvnw.getAbsolutePath(), "verify", "site", "site:stage",
+                        mvnw.getAbsolutePath(), "site", "site:stage",
                         "site:deploy", "-B", "-T", "1",
                         "-Dsite.deploy.url=" + stagingUrl);
                 ReleaseSupport.swapRemoteSiteDir(gitRoot, getLog(), releaseDisk);
