@@ -34,8 +34,16 @@ public class FixSvgMojo extends AbstractMojo {
     @Parameter(property = "htmlFile", required = true)
     File htmlFile;
 
+    /** Skip execution. */
+    @Parameter(property = "skip", defaultValue = "false")
+    boolean skip;
+
     @Override
     public void execute() throws MojoExecutionException {
+        if (skip) {
+            getLog().debug("fix-svg: skipped");
+            return;
+        }
         if (!htmlFile.isFile()) {
             getLog().info("fix-svg: file does not exist, skipping — " + htmlFile);
             return;
