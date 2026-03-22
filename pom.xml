@@ -54,7 +54,7 @@
         </snapshotRepository>
         <site>
             <id>ike-site</id>
-            <url>scpexe://proxy/srv/ike-site/ike-tooling</url>
+            <url>${site.deploy.url}</url>
         </site>
     </distributionManagement>
 
