@@ -93,6 +93,10 @@
         <assertj.version>3.27.3</assertj.version>
         <testcontainers.version>2.0.4</testcontainers.version>
 
+        <!-- Test groups — override with -Dsurefire.excludedGroups= to include container tests -->
+        <surefire.excludedGroups>container</surefire.excludedGroups>
+        <surefire.groups/>
+
         <!-- JaCoCo -->
         <jacoco-maven-plugin.version>0.8.14</jacoco-maven-plugin.version>
     </properties>
@@ -132,8 +136,10 @@
                     <version>${maven-surefire-plugin.version}</version>
                     <configuration>
                         <redirectTestOutputToFile>true</redirectTestOutputToFile>
-                        <!-- Exclude container tests by default; run with -Dgroups=container -->
-                        <excludedGroups>container</excludedGroups>
+                        <!-- Exclude container tests by default; run with
+                             -Dsurefire.excludedGroups= -Dsurefire.groups=container -->
+                        <excludedGroups>${surefire.excludedGroups}</excludedGroups>
+                        <groups>${surefire.groups}</groups>
                         <argLine>
                             @{argLine}
                             --enable-preview
