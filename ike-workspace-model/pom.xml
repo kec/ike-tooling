@@ -33,7 +33,7 @@
         (topological sort, cascade analysis, cycle detection) and version
         manipulation utilities. Foundation for ike-maven-plugin workspace goals.
     </description>
-    <url>https://github.com/IKE-Network/ike-pipeline</url>
+    <url>https://github.com/kec/ike-tooling</url>
     <inceptionYear>2026</inceptionYear>
 
     <licenses>
@@ -60,7 +60,7 @@
         </snapshotRepository>
         <site>
             <id>ike-site</id>
-            <url>scpexe://proxy/srv/ike-site/ike-pipeline/${project.artifactId}</url>
+            <url>${site.deploy.url}/${project.artifactId}</url>
         </site>
     </distributionManagement>
 
