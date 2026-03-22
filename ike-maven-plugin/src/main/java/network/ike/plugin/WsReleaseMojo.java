@@ -272,7 +272,7 @@ public class WsReleaseMojo extends AbstractWorkspaceMojo {
         return "unknown";
     }
 
-    // ── Helper: update parent version in downstream POM ──────────────
+    // ── Helper: update parent/BOM version in downstream POM ─────────
 
     private void updateParentVersions(ReleaseCandidate rc,
                                        Map<String, String> releasedVersions) {
@@ -283,19 +283,36 @@ public class WsReleaseMojo extends AbstractWorkspaceMojo {
             String content = Files.readString(pom, StandardCharsets.UTF_8);
             String original = content;
 
-            for (var entry : releasedVersions.entrySet()) {
-                String releasedName = entry.getKey();
-                String releasedVersion = entry.getValue();
+            // Use explicit version-property declarations from depends-on edges
+            for (network.ike.workspace.Dependency dep : rc.component.dependsOn()) {
+                String upstreamName = dep.component();
+                if (!releasedVersions.containsKey(upstreamName)) continue;
+
+                String releasedVersion = releasedVersions.get(upstreamName);
                 String nextSnapshot = bumpToNextSnapshot(releasedVersion);
 
-                content = updateParentVersion(content, releasedName, nextSnapshot);
+                // Always try parent version update (matches <parent><artifactId>)
+                content = updateParentVersion(content, upstreamName, nextSnapshot);
 
-                // Also update version properties like <ike-pipeline.version>
-                // or <ike.pipeline.version>
-                String propName1 = releasedName + ".version";
-                String propName2 = releasedName.replace("-", ".") + ".version";
-                for (String prop : List.of(propName1, propName2)) {
-                    content = updateVersionProperty(content, prop, nextSnapshot);
+                // Use declared version-property if present
+                if (dep.versionProperty() != null) {
+                    content = updateVersionProperty(content, dep.versionProperty(), nextSnapshot);
+                    getLog().info("    " + rc.name + ": " + dep.versionProperty()
+                            + " → " + nextSnapshot
+                            + " (from " + upstreamName + " " + releasedVersion + ")");
+                } else {
+                    // Fallback: heuristic property name matching
+                    String propName1 = upstreamName + ".version";
+                    String propName2 = upstreamName.replace("-", ".") + ".version";
+                    for (String prop : List.of(propName1, propName2)) {
+                        String before = content;
+                        content = updateVersionProperty(content, prop, nextSnapshot);
+                        if (!content.equals(before)) {
+                            getLog().info("    " + rc.name + ": " + prop
+                                    + " → " + nextSnapshot
+                                    + " (heuristic, from " + upstreamName + ")");
+                        }
+                    }
                 }
             }
 

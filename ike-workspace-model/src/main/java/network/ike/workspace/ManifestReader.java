@@ -147,7 +147,8 @@ public final class ManifestReader {
         for (Map<String, Object> entry : raw) {
             result.add(new Dependency(
                     stringField(entry, "component", ""),
-                    stringField(entry, "relationship", "build")
+                    stringField(entry, "relationship", "build"),
+                    stringField(entry, "version-property", null)
             ));
         }
         return Collections.unmodifiableList(result);
