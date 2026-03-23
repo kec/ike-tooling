@@ -156,6 +156,73 @@ class FeatureFinishBareModeTest {
         assertThat(tags).contains(expectedTag);
     }
 
+    @Test
+    void bareMode_multiModuleProject_stripsSubmoduleVersions() throws Exception {
+        // Add a submodule with the branch-qualified version
+        // (we're already on feature/test-finish from setUp)
+        Path subDir = tempDir.resolve("sub-module");
+        Files.createDirectories(subDir);
+        Files.writeString(subDir.resolve("pom.xml"), """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <project xmlns="http://maven.apache.org/POM/4.0.0">
+                    <parent>
+                        <groupId>com.test</groupId>
+                        <artifactId>bare-finish</artifactId>
+                        <version>3.0.0-test-finish-SNAPSHOT</version>
+                    </parent>
+                    <artifactId>sub-module</artifactId>
+                </project>
+                """, StandardCharsets.UTF_8);
+
+        exec(tempDir, "git", "add", ".");
+        exec(tempDir, "git", "commit", "-m", "Add submodule with qualified version");
+
+        FeatureFinishMojo mojo = new FeatureFinishMojo();
+        mojo.feature = FEATURE_NAME;
+        mojo.targetBranch = "main";
+        mojo.push = false;
+        mojo.dryRun = false;
+
+        mojo.execute();
+
+        // Verify on main branch
+        String branch = execCapture(tempDir,
+                "git", "rev-parse", "--abbrev-ref", "HEAD");
+        assertThat(branch).isEqualTo("main");
+
+        // Root POM version should be stripped back to plain SNAPSHOT
+        Path pom = tempDir.resolve("pom.xml");
+        String rootPomContent = Files.readString(pom, StandardCharsets.UTF_8);
+        assertThat(rootPomContent).doesNotContain("test-finish");
+        assertThat(rootPomContent).contains("3.0.0-SNAPSHOT");
+
+        // Submodule parent version should also be stripped
+        Path subPom = subDir.resolve("pom.xml");
+        String subPomContent = Files.readString(subPom, StandardCharsets.UTF_8);
+        assertThat(subPomContent).doesNotContain("test-finish");
+        assertThat(subPomContent).contains("3.0.0-SNAPSHOT");
+    }
+
+    @Test
+    void bareMode_dryRun_logsVersionInfo() throws Exception {
+        FeatureFinishMojo mojo = new FeatureFinishMojo();
+        mojo.feature = FEATURE_NAME;
+        mojo.targetBranch = "main";
+        mojo.push = false;
+        mojo.dryRun = true;
+
+        mojo.execute();
+
+        // Verify still on feature branch (dry run makes no changes)
+        String branch = execCapture(tempDir,
+                "git", "rev-parse", "--abbrev-ref", "HEAD");
+        assertThat(branch).isEqualTo(BRANCH_NAME);
+
+        // Verify no merge tag was created
+        String tags = execCapture(tempDir, "git", "tag", "-l");
+        assertThat(tags).isEmpty();
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────
 
     private void exec(Path workDir, String... command) throws Exception {

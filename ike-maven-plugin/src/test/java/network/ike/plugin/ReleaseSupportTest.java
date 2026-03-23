@@ -788,6 +788,253 @@ class ReleaseSupportTest {
         assertThat(result.getAbsolutePath()).isEqualTo(mvnw.toAbsolutePath().toString());
     }
 
+    // ── readPomVersion: version only in parent ─────────────────────
+
+    @Test
+    void readPomVersion_versionOnlyInParent_throws(@TempDir Path tmpDir) throws Exception {
+        File pom = writePom(tmpDir, """
+                <project>
+                    <parent>
+                        <groupId>network.ike</groupId>
+                        <artifactId>ike-parent</artifactId>
+                        <version>20-SNAPSHOT</version>
+                    </parent>
+                    <artifactId>child-no-version</artifactId>
+                </project>
+                """);
+
+        // After stripping <parent>, no <version> remains → should throw
+        assertThatThrownBy(() -> ReleaseSupport.readPomVersion(pom))
+                .isInstanceOf(MojoExecutionException.class)
+                .hasMessageContaining("Could not extract <version>");
+    }
+
+    @Test
+    void readPomVersion_minimalValidPom_throws(@TempDir Path tmpDir) throws Exception {
+        File pom = writePom(tmpDir, """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <project>
+                    <modelVersion>4.0.0</modelVersion>
+                </project>
+                """);
+
+        assertThatThrownBy(() -> ReleaseSupport.readPomVersion(pom))
+                .isInstanceOf(MojoExecutionException.class)
+                .hasMessageContaining("Could not extract <version>");
+    }
+
+    // ── setPomVersion: edge cases ────────────────────────────────────
+
+    @Test
+    void setPomVersion_noParentBlock_replacesFirstVersion(@TempDir Path tmpDir) throws Exception {
+        File pom = writePom(tmpDir, """
+                <project>
+                    <groupId>network.ike</groupId>
+                    <artifactId>simple</artifactId>
+                    <version>5.0.0</version>
+                </project>
+                """);
+
+        ReleaseSupport.setPomVersion(pom, "5.0.0", "5.0.1");
+
+        String content = Files.readString(pom.toPath(), StandardCharsets.UTF_8);
+        assertThat(content).contains("<version>5.0.1</version>");
+        assertThat(content).doesNotContain("<version>5.0.0</version>");
+    }
+
+    @Test
+    void setPomVersion_versionInComment_notReplaced(@TempDir Path tmpDir) throws Exception {
+        // The old version appears in a comment AND as the real version.
+        // setPomVersion does text replacement, so the comment version
+        // will NOT be replaced (it looks for the exact <version>X</version>
+        // tag after the parent block). Document current behavior.
+        File pom = writePom(tmpDir, """
+                <project>
+                    <!-- Current version is 3.0.0 -->
+                    <groupId>network.ike</groupId>
+                    <artifactId>app</artifactId>
+                    <version>3.0.0</version>
+                </project>
+                """);
+
+        ReleaseSupport.setPomVersion(pom, "3.0.0", "3.0.1");
+
+        String content = Files.readString(pom.toPath(), StandardCharsets.UTF_8);
+        // The comment text "3.0.0" inside <!-- ... --> should remain
+        // because setPomVersion only replaces <version>3.0.0</version>
+        assertThat(content).contains("<!-- Current version is 3.0.0 -->");
+        assertThat(content).contains("<version>3.0.1</version>");
+    }
+
+    @Test
+    void setPomVersion_cdataSection_notAffected(@TempDir Path tmpDir) throws Exception {
+        File pom = writePom(tmpDir, """
+                <project>
+                    <groupId>network.ike</groupId>
+                    <artifactId>app</artifactId>
+                    <version>1.0.0</version>
+                    <description><![CDATA[Version 1.0.0 notes]]></description>
+                </project>
+                """);
+
+        ReleaseSupport.setPomVersion(pom, "1.0.0", "1.0.1");
+
+        String content = Files.readString(pom.toPath(), StandardCharsets.UTF_8);
+        // CDATA contains "1.0.0" but NOT in a <version> tag, so unchanged
+        assertThat(content).contains("Version 1.0.0 notes");
+        assertThat(content).contains("<version>1.0.1</version>");
+    }
+
+    @Test
+    void setPomVersion_parentHasSameVersion_onlyProjectVersionChanged(@TempDir Path tmpDir)
+            throws Exception {
+        // Both parent and project have the same version string.
+        // setPomVersion should only change the project version (after parent block).
+        File pom = writePom(tmpDir, """
+                <project>
+                    <parent>
+                        <groupId>network.ike</groupId>
+                        <artifactId>ike-parent</artifactId>
+                        <version>2.0.0</version>
+                    </parent>
+                    <artifactId>child</artifactId>
+                    <version>2.0.0</version>
+                </project>
+                """);
+
+        ReleaseSupport.setPomVersion(pom, "2.0.0", "2.0.1");
+
+        String content = Files.readString(pom.toPath(), StandardCharsets.UTF_8);
+        // Parent version unchanged, project version changed
+        assertThat(content)
+                .containsOnlyOnce("<version>2.0.1</version>")
+                .contains("<version>2.0.0</version>");  // parent still has old version
+    }
+
+    // ── findPomFiles: additional edge cases ──────────────────────────
+
+    @Test
+    void findPomFiles_noPomFiles_emptyResult(@TempDir Path tmpDir) throws Exception {
+        // Directory with no pom.xml files at all
+        Files.writeString(tmpDir.resolve("README.txt"), "hello", StandardCharsets.UTF_8);
+
+        var poms = ReleaseSupport.findPomFiles(tmpDir.toFile());
+        assertThat(poms).isEmpty();
+    }
+
+    @Test
+    void findPomFiles_deeplyNestedTarget_excluded(@TempDir Path tmpDir) throws Exception {
+        writePom(tmpDir, "<project/>");
+        // Nested target directories should all be excluded
+        Path deep = tmpDir.resolve("sub/target/nested/deep");
+        Files.createDirectories(deep);
+        writePom(deep, "<project/>");
+
+        var poms = ReleaseSupport.findPomFiles(tmpDir.toFile());
+        assertThat(poms).hasSize(1);  // only root pom
+    }
+
+    @Test
+    void findPomFiles_singlePom_noSubmodules(@TempDir Path tmpDir) throws Exception {
+        writePom(tmpDir, "<project><version>1.0</version></project>");
+
+        var poms = ReleaseSupport.findPomFiles(tmpDir.toFile());
+        assertThat(poms).hasSize(1);
+        assertThat(poms.get(0).getParentFile().toPath()).isEqualTo(tmpDir);
+    }
+
+    // ── replaceProjectVersionRefs: edge cases ────────────────────────
+
+    @Test
+    void replaceProjectVersionRefs_multipleRefsInOnePom(@TempDir Path tmpDir) throws Exception {
+        writePom(tmpDir, """
+                <project>
+                    <version>1.0</version>
+                    <dependencies>
+                        <dependency>
+                            <version>${project.version}</version>
+                        </dependency>
+                    </dependencies>
+                    <build>
+                        <plugins>
+                            <plugin>
+                                <version>${project.version}</version>
+                            </plugin>
+                        </plugins>
+                    </build>
+                </project>
+                """);
+
+        var log = new org.apache.maven.plugin.logging.SystemStreamLog();
+        var modified = ReleaseSupport.replaceProjectVersionRefs(
+                tmpDir.toFile(), "2.0.0", log);
+
+        assertThat(modified).hasSize(1);
+        String content = Files.readString(modified.get(0).toPath(), StandardCharsets.UTF_8);
+        // Both occurrences should be replaced
+        assertThat(content).doesNotContain("${project.version}");
+        // Count: two version elements should now have literal "2.0.0"
+        long count = content.lines()
+                .filter(line -> line.contains("<version>2.0.0</version>"))
+                .count();
+        assertThat(count).isEqualTo(2);
+    }
+
+    @Test
+    void replaceProjectVersionRefs_nestedSubmodules(@TempDir Path tmpDir) throws Exception {
+        // Root has no ${project.version}, but two submodules do
+        writePom(tmpDir, "<project><version>1.0</version></project>");
+
+        Path subA = tmpDir.resolve("sub-a");
+        Files.createDirectories(subA);
+        writePom(subA, """
+                <project>
+                    <parent><version>1.0</version></parent>
+                    <version>${project.version}</version>
+                </project>
+                """);
+
+        Path subB = tmpDir.resolve("sub-b");
+        Files.createDirectories(subB);
+        writePom(subB, """
+                <project>
+                    <dependencies>
+                        <dependency><version>${project.version}</version></dependency>
+                    </dependencies>
+                </project>
+                """);
+
+        var log = new org.apache.maven.plugin.logging.SystemStreamLog();
+        var modified = ReleaseSupport.replaceProjectVersionRefs(
+                tmpDir.toFile(), "3.0.0", log);
+
+        assertThat(modified).hasSize(2);
+    }
+
+    @Test
+    void replaceProjectVersionRefs_expressionInXmlComment_stillReplaced(@TempDir Path tmpDir)
+            throws Exception {
+        // ${project.version} in an XML comment IS replaced (text-level replacement).
+        // This documents current behavior.
+        writePom(tmpDir, """
+                <project>
+                    <!-- ref: ${project.version} -->
+                    <dependencies>
+                        <dependency><version>${project.version}</version></dependency>
+                    </dependencies>
+                </project>
+                """);
+
+        var log = new org.apache.maven.plugin.logging.SystemStreamLog();
+        var modified = ReleaseSupport.replaceProjectVersionRefs(
+                tmpDir.toFile(), "4.0.0", log);
+
+        assertThat(modified).hasSize(1);
+        String content = Files.readString(modified.get(0).toPath(), StandardCharsets.UTF_8);
+        // Both comment and element occurrences replaced
+        assertThat(content).doesNotContain("${project.version}");
+    }
+
     // ── helper ──────────────────────────────────────────────────────
 
     private static File writePom(Path dir, String content) throws IOException {

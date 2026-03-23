@@ -266,6 +266,61 @@ class ReleaseIntegrationTest {
         assertThat(subPom).contains("${project.version}");
     }
 
+    // ── Dry-run: deploySite=true logs site URL ─────────────────────
+
+    @Test
+    void release_dryRun_deploySiteTrue_logsSiteUrl() throws Exception {
+        createReleaseProject(tempDir);
+
+        ReleaseMojo mojo = new ReleaseMojo();
+        mojo.baseDir = tempDir.toFile();
+        mojo.dryRun = true;
+        mojo.skipVerify = true;
+        mojo.deploySite = true;
+
+        // Should complete without error and cover the deploySite=true
+        // branch inside the dry-run path (L145-147)
+        mojo.execute();
+
+        // Verify the version was derived correctly (same as other dry-run tests)
+        assertThat(mojo.releaseVersion).isEqualTo("1.0.0");
+    }
+
+    // ── Dry-run: explicit blank releaseVersion treated as unset ──────
+
+    @Test
+    void release_dryRun_blankReleaseVersion_derives() throws Exception {
+        createReleaseProject(tempDir);
+
+        ReleaseMojo mojo = new ReleaseMojo();
+        mojo.baseDir = tempDir.toFile();
+        mojo.dryRun = true;
+        mojo.skipVerify = true;
+        mojo.deploySite = false;
+        mojo.releaseVersion = "   ";  // blank — should be treated as unset
+
+        mojo.execute();
+
+        assertThat(mojo.releaseVersion).isEqualTo("1.0.0");
+    }
+
+    @Test
+    void release_dryRun_blankNextVersion_derives() throws Exception {
+        createReleaseProject(tempDir);
+
+        ReleaseMojo mojo = new ReleaseMojo();
+        mojo.baseDir = tempDir.toFile();
+        mojo.dryRun = true;
+        mojo.skipVerify = true;
+        mojo.deploySite = false;
+        mojo.releaseVersion = "1.0.0";
+        mojo.nextVersion = "   ";  // blank — should be treated as unset
+
+        mojo.execute();
+
+        assertThat(mojo.nextVersion).isEqualTo("1.0.1-SNAPSHOT");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────
 
     /**

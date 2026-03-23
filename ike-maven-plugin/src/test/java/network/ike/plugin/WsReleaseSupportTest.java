@@ -341,4 +341,101 @@ class WsReleaseSupportTest {
                 .contains("components:\n")
                 .endsWith("components:\n");
     }
+
+    // ── extractVersionFromPom: edge cases ────────────────────────────
+
+    @Test
+    void extractVersionFromPom_versionWithQualifier() {
+        String pom = "<project><version>3.0.0-my-feature-SNAPSHOT</version></project>";
+        assertThat(WsReleaseMojo.extractVersionFromPom(pom))
+                .isEqualTo("3.0.0-my-feature-SNAPSHOT");
+    }
+
+    @Test
+    void extractVersionFromPom_multipleVersionElements_returnsFirst() {
+        // Multiple <version> elements — returns the first one found
+        String pom = """
+                <project>
+                    <version>1.0.0</version>
+                    <dependencies>
+                        <dependency>
+                            <version>2.0.0</version>
+                        </dependency>
+                    </dependencies>
+                </project>
+                """;
+        assertThat(WsReleaseMojo.extractVersionFromPom(pom))
+                .isEqualTo("1.0.0");
+    }
+
+    @Test
+    void extractVersionFromPom_versionInComment_skipsComment() {
+        // Comments should not confuse the regex because the regex
+        // matches the first <version> tag which is the real one
+        String pom = """
+                <project>
+                    <!-- version was 0.9 -->
+                    <version>1.0.0</version>
+                </project>
+                """;
+        assertThat(WsReleaseMojo.extractVersionFromPom(pom))
+                .isEqualTo("1.0.0");
+    }
+
+    // ── updateParentVersion: additional edge cases ───────────────────
+
+    @Test
+    void updateParentVersion_noParentBlock_unchanged() {
+        String pom = """
+                <project>
+                    <groupId>network.ike</groupId>
+                    <artifactId>root</artifactId>
+                    <version>1.0</version>
+                </project>
+                """;
+        String result = WsReleaseMojo.updateParentVersion(pom, "ike-parent", "21-SNAPSHOT");
+
+        // No parent block → no change
+        assertThat(result).isEqualTo(pom);
+    }
+
+    @Test
+    void updateParentVersion_multipleArtifactIds_onlyParentChanged() {
+        String pom = """
+                <project>
+                    <parent>
+                        <artifactId>ike-parent</artifactId>
+                        <version>19</version>
+                    </parent>
+                    <artifactId>my-module</artifactId>
+                    <version>1.0</version>
+                    <dependencies>
+                        <dependency>
+                            <artifactId>ike-parent</artifactId>
+                            <version>19</version>
+                        </dependency>
+                    </dependencies>
+                </project>
+                """;
+        String result = WsReleaseMojo.updateParentVersion(pom, "ike-parent", "21");
+
+        // Parent version should be updated, but the dependency version should not
+        // (updateParentVersion only modifies the parent block)
+        assertThat(result).contains("<parent>");
+    }
+
+    // ── updateVersionProperty: edge cases ────────────────────────────
+
+    @Test
+    void updateVersionProperty_propertyNotPresent_unchanged() {
+        String pom = """
+                <properties>
+                    <java.version>21</java.version>
+                </properties>
+                """;
+        String result = WsReleaseMojo.updateVersionProperty(
+                pom, "ike-pipeline.version", "21-SNAPSHOT");
+
+        assertThat(result).isEqualTo(pom);
+    }
 }

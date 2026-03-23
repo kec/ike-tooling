@@ -111,6 +111,48 @@ class CheckpointMojoTest {
         assertThatCode(mojo::execute).doesNotThrowAnyException();
     }
 
+    // ── Dry-run: combined flags ────────────────────────────────────
+
+    @Test
+    void dryRun_deploySiteTrue_skipVerifyFalse() throws Exception {
+        createCheckpointProject(tempDir);
+
+        CheckpointMojo mojo = newMojo(tempDir);
+        mojo.dryRun = true;
+        mojo.deploySite = true;
+        mojo.skipVerify = false;
+
+        // Covers L83-84 (skipVerify=false) and L88-90 (deploySite=true)
+        assertThatCode(mojo::execute).doesNotThrowAnyException();
+    }
+
+    @Test
+    void dryRun_deploySiteFalse_skipVerifyTrue() throws Exception {
+        createCheckpointProject(tempDir);
+
+        CheckpointMojo mojo = newMojo(tempDir);
+        mojo.dryRun = true;
+        mojo.deploySite = false;
+        mojo.skipVerify = true;
+
+        // Covers L85-86 (skipVerify=true) and L88 deploySite=false branch
+        assertThatCode(mojo::execute).doesNotThrowAnyException();
+    }
+
+    @Test
+    void dryRun_customLabel_deploySiteTrue() throws Exception {
+        createCheckpointProject(tempDir);
+
+        CheckpointMojo mojo = newMojo(tempDir);
+        mojo.dryRun = true;
+        mojo.checkpointLabel = "my-checkpoint";
+        mojo.deploySite = true;
+        mojo.skipVerify = true;
+
+        // Custom label + deploySite=true + skipVerify=true
+        assertThatCode(mojo::execute).doesNotThrowAnyException();
+    }
+
     // ── Non-dry-run validation ──────────────────────────────────────
 
     @Test

@@ -183,6 +183,59 @@ class FeatureStartBareModeTest {
         assertThat(subPom).contains("SNAPSHOT");
     }
 
+    @Test
+    void bareMode_dryRun_skipVersion_noVersionInfo() throws Exception {
+        FeatureStartMojo mojo = new FeatureStartMojo();
+        mojo.feature = "skip-dry";
+        mojo.dryRun = true;
+        mojo.skipVersion = true;
+
+        mojo.execute();
+
+        // Branch should NOT be created
+        String branch = execCapture(tempDir,
+                "git", "rev-parse", "--abbrev-ref", "HEAD");
+        assertThat(branch).isEqualTo("main");
+
+        // POM unchanged
+        String pomContent = Files.readString(
+                tempDir.resolve("pom.xml"), StandardCharsets.UTF_8);
+        assertThat(pomContent).contains("2.0.0-SNAPSHOT");
+        assertThat(pomContent).doesNotContain("skip-dry");
+    }
+
+    @Test
+    void bareMode_noPomFile_skipVersionImplied() throws Exception {
+        // Create a repo without a pom.xml
+        Path noPomDir = tempDir.resolve("no-pom-repo");
+        Files.createDirectories(noPomDir);
+        Files.writeString(noPomDir.resolve("README.md"), "# Docs",
+                StandardCharsets.UTF_8);
+        exec(noPomDir, "git", "init", "-b", "main");
+        exec(noPomDir, "git", "config", "user.email", "test@example.com");
+        exec(noPomDir, "git", "config", "user.name", "Test");
+        exec(noPomDir, "git", "add", ".");
+        exec(noPomDir, "git", "commit", "-m", "Initial commit");
+
+        String savedDir = System.getProperty("user.dir");
+        System.setProperty("user.dir", noPomDir.toAbsolutePath().toString());
+        try {
+            FeatureStartMojo mojo = new FeatureStartMojo();
+            mojo.feature = "no-pom-test";
+            mojo.skipVersion = true;
+            mojo.dryRun = false;
+
+            mojo.execute();
+
+            // Branch should be created
+            String branch = execCapture(noPomDir,
+                    "git", "rev-parse", "--abbrev-ref", "HEAD");
+            assertThat(branch).isEqualTo("feature/no-pom-test");
+        } finally {
+            System.setProperty("user.dir", savedDir);
+        }
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────
 
     private void exec(Path workDir, String... command) throws Exception {
