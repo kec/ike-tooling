@@ -405,10 +405,11 @@ public class AsciidocMojo extends AbstractMojo {
                 .baseDir(baseDir)
                 .attributes(attrs);
 
-        // For single-file modes, set the source document
+        // For single-document modes, name the output using documentName
+        // (e.g., "example-project.html" instead of "index.html")
         if (sourceDocumentName != null && (singleFile || backend == Backend.PDF)) {
             builder.toFile(new File(outDir,
-                    sourceDocumentName.replace(".adoc", "." + outputExtension(backend))));
+                    documentName + "." + outputExtension(backend)));
         }
 
         return builder.build();

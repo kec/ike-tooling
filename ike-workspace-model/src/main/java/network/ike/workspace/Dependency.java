@@ -17,7 +17,12 @@ public record Dependency(
         String relationship,
         String versionProperty
 ) {
-    /** Two-arg constructor for backwards compatibility (no version-property). */
+    /**
+     * Two-arg constructor for backwards compatibility (no version-property).
+     *
+     * @param component    the name of the depended-on component
+     * @param relationship the nature of the dependency
+     */
     public Dependency(String component, String relationship) {
         this(component, relationship, null);
     }
