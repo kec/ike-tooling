@@ -39,7 +39,8 @@ public class CheckpointMojo extends AbstractMojo {
     @Parameter(property = "checkpointLabel")
     String checkpointLabel;
 
-    @Parameter(property = "deploySite", defaultValue = "true")
+    /** Deploy site to the remote server. Opt-in — requires SSH proxy. */
+    @Parameter(property = "deploySite", defaultValue = "false")
     boolean deploySite;
 
     @Parameter(property = "dryRun", defaultValue = "false")
