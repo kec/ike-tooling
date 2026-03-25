@@ -17,6 +17,9 @@ import java.util.regex.Pattern;
  */
 public class OutputValidator {
 
+    /** Creates a new output validator. */
+    public OutputValidator() {}
+
     /** Unresolved attribute reference: {some-attribute} in output text. */
     private static final Pattern UNRESOLVED_ATTR =
             Pattern.compile("\\{[a-zA-Z][a-zA-Z0-9_-]*\\}");
@@ -32,7 +35,12 @@ public class OutputValidator {
             Pattern.compile("<img[^>]+src=\"([^\"]+)\"", Pattern.CASE_INSENSITIVE);
 
     /** Severity levels for validation issues. */
-    public enum Severity { WARNING, ERROR }
+    public enum Severity {
+        /** Non-fatal issue (e.g., missing image). */
+        WARNING,
+        /** Fatal issue when strict mode is enabled (e.g., unresolved attribute). */
+        ERROR
+    }
 
     /**
      * A single validation issue found in a generated file.

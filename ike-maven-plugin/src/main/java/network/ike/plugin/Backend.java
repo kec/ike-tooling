@@ -25,12 +25,20 @@ public enum Backend {
         this.outputSubdir = outputSubdir;
     }
 
-    /** The backend name as AsciidoctorJ expects it. */
+    /**
+     * The backend name as AsciidoctorJ expects it.
+     *
+     * @return the AsciidoctorJ backend identifier (e.g., "html5", "pdf", "docbook5")
+     */
     public String asciidoctorName() {
         return asciidoctorName;
     }
 
-    /** Default output subdirectory under the goal's output root. */
+    /**
+     * Default output subdirectory under the goal's output root.
+     *
+     * @return subdirectory name (e.g., "html", "pdf-prawn", "docbook")
+     */
     public String outputSubdir() {
         return outputSubdir;
     }
@@ -39,6 +47,8 @@ public enum Backend {
      * Whether this backend supports AsciidoctorJ Postprocessor extensions.
      * The Prawn PDF backend crashes when a Java Postprocessor is registered
      * (JRuby type conversion error in PostprocessorProxy).
+     *
+     * @return true if postprocessors can be safely registered
      */
     public boolean supportsPostprocessor() {
         return this != PDF;

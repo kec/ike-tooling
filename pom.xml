@@ -91,6 +91,7 @@
         <snakeyaml.version>2.2</snakeyaml.version>
         <junit-jupiter.version>5.11.4</junit-jupiter.version>
         <assertj.version>3.27.3</assertj.version>
+        <jruby.version>10.0.3.0</jruby.version>
         <testcontainers.version>2.0.4</testcontainers.version>
 
         <!-- Test groups — override with -Dsurefire.excludedGroups= to include container tests -->
@@ -132,6 +133,19 @@
                             <groupId>org.asciidoctor</groupId>
                             <artifactId>asciidoctor-converter-doxia-module</artifactId>
                             <version>3.2.0</version>
+                            <exclusions>
+                                <exclusion>
+                                    <groupId>org.jruby</groupId>
+                                    <artifactId>jruby-base</artifactId>
+                                </exclusion>
+                            </exclusions>
+                        </dependency>
+                        <!-- JRuby 10 — replaces transitive 9.4.x to eliminate
+                             sun.misc.Unsafe deprecation warnings on Java 25 -->
+                        <dependency>
+                            <groupId>org.jruby</groupId>
+                            <artifactId>jruby</artifactId>
+                            <version>${jruby.version}</version>
                         </dependency>
                         <!-- Sentry skin tools — provides Velocity context
                              variables ($headElement, $bodyElement, etc.) -->
